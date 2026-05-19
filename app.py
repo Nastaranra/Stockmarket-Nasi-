@@ -30,31 +30,79 @@ st.warning(
 
 
 
+# -----------------------------
+
+# Tickers
+
+# -----------------------------
+
+
+
 @st.cache_data(ttl=86400)
 
 def get_sp500_tickers():
+
+    fallback = [
+
+        "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL",
+
+        "META", "TSLA", "JPM", "V", "UNH",
+
+        "XOM", "WMT", "MA", "PG", "HD",
+
+        "COST", "AVGO", "LLY", "NFLX", "AMD",
+
+        "BAC", "KO", "PEP", "CRM", "ADBE",
+
+        "CSCO", "ORCL", "INTC", "IBM", "QCOM",
+
+        "T", "DIS", "NKE", "MCD", "ABT",
+
+        "MRK", "PFE", "CVX", "BA", "CAT",
+
+        "GE", "GS", "AXP", "SPY", "QQQ",
+
+        "DIA", "IWM", "VOO", "VTI", "SCHD"
+
+    ]
+
+
 
     try:
 
         url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
 
-        tables = pd.read_html(url, flavor="lxml")
+        tables = pd.read_html(url)
 
         df = tables[0]
 
-        tickers = df["Symbol"].str.replace(".", "-", regex=False).tolist()
+        tickers = df["Symbol"].astype(str).str.replace(".", "-", regex=False).tolist()
+
+
+
+        if len(tickers) == 0:
+
+            return fallback, pd.DataFrame({"Symbol": fallback})
+
+
 
         return tickers, df
 
-    except Exception as e:
-
-        fallback = ["AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "JPM", "V", "UNH"]
-
-        df = pd.DataFrame({"Symbol": fallback})
-
-        return fallback, df
 
 
+    except Exception:
+
+        return fallback, pd.DataFrame({"Symbol": fallback})
+
+
+
+
+
+# -----------------------------
+
+# Load stock data
+
+# -----------------------------
 
 
 
@@ -64,11 +112,23 @@ def load_stock_data(ticker, period="2y"):
 
     try:
 
-        df = yf.download(ticker, period=period, auto_adjust=True, progress=False)
+        df = yf.download(
+
+            ticker,
+
+            period=period,
+
+            auto_adjust=True,
+
+            progress=False,
+
+            threads=False
+
+        )
 
 
 
-        if df.empty:
+        if df is None or df.empty:
 
             return pd.DataFrame()
 
@@ -84,7 +144,15 @@ def load_stock_data(ticker, period="2y"):
 
 
 
+        if "Date" not in df.columns or "Close" not in df.columns:
+
+            return pd.DataFrame()
+
+
+
         return df
+
+
 
     except Exception:
 
@@ -101,6 +169,8 @@ def load_fundamentals(ticker):
     try:
 
         info = yf.Ticker(ticker).info
+
+
 
         return {
 
@@ -122,11 +192,39 @@ def load_fundamentals(ticker):
 
         }
 
+
+
     except Exception:
 
-        return {}
+        return {
+
+            "sector": None,
+
+            "industry": None,
+
+            "market_cap": None,
+
+            "pe_ratio": None,
+
+            "forward_pe": None,
+
+            "profit_margin": None,
+
+            "revenue_growth": None,
+
+            "debt_to_equity": None,
+
+        }
 
 
+
+
+
+# -----------------------------
+
+# Indicators
+
+# -----------------------------
 
 
 
@@ -180,21 +278,29 @@ def add_indicators(df):
 
 
 
-def safe_value(x, default=0):
+def safe_number(value, default=0):
 
     try:
 
-        if pd.isna(x):
+        if value is None or pd.isna(value):
 
             return default
 
-        return x
+        return float(value)
 
     except Exception:
 
         return default
 
 
+
+
+
+# -----------------------------
+
+# Scoring
+
+# -----------------------------
 
 
 
@@ -206,21 +312,21 @@ def calculate_scores(latest, fundamentals):
 
 
 
-    close = safe_value(latest.get("Close"))
+    close = safe_number(latest.get("Close"))
 
-    ma20 = safe_value(latest.get("MA20"))
+    ma20 = safe_number(latest.get("MA20"))
 
-    ma50 = safe_value(latest.get("MA50"))
+    ma50 = safe_number(latest.get("MA50"))
 
-    ma200 = safe_value(latest.get("MA200"))
+    ma200 = safe_number(latest.get("MA200"))
 
-    rsi = safe_value(latest.get("RSI"))
+    rsi = safe_number(latest.get("RSI"))
 
-    return_1m = safe_value(latest.get("Return_1M"))
+    return_1m = safe_number(latest.get("Return_1M"))
 
-    return_3m = safe_value(latest.get("Return_3M"))
+    return_3m = safe_number(latest.get("Return_3M"))
 
-    volatility = safe_value(latest.get("Volatility_20D"), 1)
+    volatility = safe_number(latest.get("Volatility_20D"), 1)
 
 
 
@@ -324,7 +430,7 @@ def calculate_scores(latest, fundamentals):
 
         risk = "Low"
 
-        risk_penalty = 0
+        score -= 0
 
         reasons.append("Volatility is low.")
 
@@ -332,7 +438,7 @@ def calculate_scores(latest, fundamentals):
 
         risk = "Medium"
 
-        risk_penalty = 1
+        score -= 1
 
         reasons.append("Volatility is moderate.")
 
@@ -340,13 +446,9 @@ def calculate_scores(latest, fundamentals):
 
         risk = "High"
 
-        risk_penalty = 2
+        score -= 2
 
         reasons.append("Volatility is high.")
-
-
-
-    score -= risk_penalty
 
 
 
@@ -480,6 +582,14 @@ def analyze_stock(ticker, period="2y"):
 
 
 
+# -----------------------------
+
+# Backtest
+
+# -----------------------------
+
+
+
 def backtest_stock(ticker, period="5y", forward_days=30):
 
     df = load_stock_data(ticker, period)
@@ -488,11 +598,17 @@ def backtest_stock(ticker, period="5y", forward_days=30):
 
     if df.empty or len(df) < 260:
 
-        return None
+        return pd.DataFrame()
 
 
 
     df = add_indicators(df).dropna()
+
+
+
+    if df.empty:
+
+        return pd.DataFrame()
 
 
 
@@ -564,7 +680,7 @@ def backtest_stock(ticker, period="5y", forward_days=30):
 
 def summarize_backtest(bt):
 
-    if bt is None or bt.empty:
+    if bt.empty:
 
         return pd.DataFrame()
 
@@ -587,6 +703,14 @@ def summarize_backtest(bt):
     return summary.sort_values("Avg_Return", ascending=False)
 
 
+
+
+
+# -----------------------------
+
+# Chart
+
+# -----------------------------
 
 
 
@@ -626,6 +750,14 @@ def make_price_chart(df, ticker):
 
 
 
+# -----------------------------
+
+# App
+
+# -----------------------------
+
+
+
 tickers, sp500_df = get_sp500_tickers()
 
 
@@ -656,19 +788,9 @@ selected_ticker = st.sidebar.selectbox(
 
 
 
-max_stocks = st.sidebar.slider(
+max_stocks = min(50, len(tickers))
 
-    "How many S&P 500 stocks to scan?",
-
-    min_value=10,
-
-    max_value=min(500, len(tickers)),
-
-    value=min(50, len(tickers)),
-
-    step=10
-
-)
+st.sidebar.write(f"Scanning first {max_stocks} stocks.")
 
 
 
@@ -690,11 +812,11 @@ tab1, tab2, tab3, tab4 = st.tabs([
 
     "Single Stock",
 
-    "S&P 500 Screener",
+    "Stock Screener",
 
     "Backtest One Stock",
 
-    "S&P 500 List"
+    "Stock List"
 
 ])
 
@@ -710,7 +832,7 @@ with tab1:
 
     if result is None:
 
-        st.error("Not enough data available.")
+        st.error("Not enough data available for this stock.")
 
     else:
 
@@ -728,11 +850,11 @@ with tab1:
 
 
 
-        c1.metric("Price", f"${latest['Close']:.2f}")
+        c1.metric("Price", f"${safe_number(latest['Close']):.2f}")
 
-        c2.metric("RSI", f"{latest['RSI']:.1f}")
+        c2.metric("RSI", f"{safe_number(latest['RSI']):.1f}")
 
-        c3.metric("Volatility", f"{latest['Volatility_20D']:.1%}")
+        c3.metric("Volatility", f"{safe_number(latest['Volatility_20D']):.1%}")
 
         c4.metric("Score", result["score"])
 
@@ -810,7 +932,7 @@ with tab1:
 
 with tab2:
 
-    st.subheader("S&P 500 Screener")
+    st.subheader("Stock Screener")
 
 
 
@@ -826,55 +948,47 @@ with tab2:
 
     for idx, ticker in enumerate(selected_tickers):
 
-        try:
-
-            result = analyze_stock(ticker, period)
+        result = analyze_stock(ticker, period)
 
 
 
-            if result is not None:
+        if result is not None:
 
-                latest = result["latest"]
+            latest = result["latest"]
 
-                fundamentals = result["fundamentals"]
-
-
-
-                rows.append({
-
-                    "Ticker": ticker,
-
-                    "Label": result["label"],
-
-                    "Score": result["score"],
-
-                    "Risk": result["risk"],
-
-                    "Price": round(latest["Close"], 2),
-
-                    "RSI": round(latest["RSI"], 1),
-
-                    "Volatility": round(latest["Volatility_20D"], 3),
-
-                    "1M Return": round(latest["Return_1M"], 3),
-
-                    "3M Return": round(latest["Return_3M"], 3),
-
-                    "Sector": fundamentals.get("sector"),
-
-                    "P/E": fundamentals.get("pe_ratio"),
-
-                    "Profit Margin": fundamentals.get("profit_margin"),
-
-                    "Revenue Growth": fundamentals.get("revenue_growth"),
-
-                })
+            fundamentals = result["fundamentals"]
 
 
 
-        except Exception:
+            rows.append({
 
-            pass
+                "Ticker": ticker,
+
+                "Label": result["label"],
+
+                "Score": result["score"],
+
+                "Risk": result["risk"],
+
+                "Price": round(safe_number(latest["Close"]), 2),
+
+                "RSI": round(safe_number(latest["RSI"]), 1),
+
+                "Volatility": round(safe_number(latest["Volatility_20D"]), 3),
+
+                "1M Return": round(safe_number(latest["Return_1M"]), 3),
+
+                "3M Return": round(safe_number(latest["Return_3M"]), 3),
+
+                "Sector": fundamentals.get("sector"),
+
+                "P/E": fundamentals.get("pe_ratio"),
+
+                "Profit Margin": fundamentals.get("profit_margin"),
+
+                "Revenue Growth": fundamentals.get("revenue_growth"),
+
+            })
 
 
 
@@ -892,13 +1006,15 @@ with tab2:
 
         csv = screener.to_csv(index=False).encode("utf-8")
 
+
+
         st.download_button(
 
             "Download Screener Results",
 
             csv,
 
-            "sp500_screener_results.csv",
+            "stock_screener_results.csv",
 
             "text/csv"
 
@@ -918,11 +1034,19 @@ with tab3:
 
 
 
-    bt = backtest_stock(selected_ticker, period="5y", forward_days=forward_days)
+    bt = backtest_stock(
+
+        selected_ticker,
+
+        period="5y",
+
+        forward_days=forward_days
+
+    )
 
 
 
-    if bt is None or bt.empty:
+    if bt.empty:
 
         st.error("Not enough data for backtesting.")
 
@@ -978,21 +1102,10 @@ with tab3:
 
 
 
-        st.info(
-
-            "Use this tab to check whether labels like Strong Watch or Watch "
-
-            "actually performed better in the past."
-
-        )
-
-
-
 
 
 with tab4:
 
-    st.subheader("S&P 500 Universe")
+    st.subheader("Stock Universe")
 
     st.dataframe(sp500_df, use_container_width=True)
-
